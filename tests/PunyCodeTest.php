@@ -29,15 +29,15 @@ class PunyCodeTest extends TestCase
 
     private function dataProvider(): array
     {
-        return [[
-            [
+        return [
+            [[
                 'utf8' => 'www.аррӏе.com',
                 'idn' =>  'www.xn--80ak6aa92e.com',
-            ],
-            [
+            ]],
+            [[
                 'utf8' => 'täst.de',
                 'idn' =>  'xn--tst-qla.de',
-            ],
-        ]];
+            ]],
+        ];
     }
 }
