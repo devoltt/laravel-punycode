@@ -1,4 +1,5 @@
 <?php
+
 namespace Fomvasss\Punycode;
 
 use Fomvasss\Punycode\Exception\DomainOutOfBoundsException;
@@ -16,15 +17,15 @@ class Punycode
      * Bootstring parameter values
      *
      */
-    const BASE         = 36;
-    const TMIN         = 1;
-    const TMAX         = 26;
-    const SKEW         = 38;
-    const DAMP         = 700;
+    const BASE = 36;
+    const TMIN = 1;
+    const TMAX = 26;
+    const SKEW = 38;
+    const DAMP = 700;
     const INITIAL_BIAS = 72;
-    const INITIAL_N    = 128;
-    const PREFIX       = 'xn--';
-    const DELIMITER    = '-';
+    const INITIAL_N = 128;
+    const PREFIX = 'xn--';
+    const DELIMITER = '-';
 
     /**
      * Encode table
@@ -61,19 +62,16 @@ class Punycode
     /**
      * Punycode constructor.
      */
-    public function __construct()
+    public function __construct(string $encoding = 'UTF-8')
     {
-        $this->config = config('punycode');
-        foreach ($this->config as $name => $value) {
-            $this->$name = $value;
-        }
-        //encoding
+        $this->encoding = $encoding;
     }
 
     /**
      * Encode a domain to its Punycode version
      *
      * @param string $input Domain name in Unicode to be encoded
+     *
      * @return string Punycode representation in ASCII
      */
     public function encode($input)
@@ -100,6 +98,7 @@ class Punycode
      * Encode a part of a domain name, such as tld, to its Punycode version
      *
      * @param string $input Part of a domain name
+     *
      * @return string Punycode representation of a domain part
      */
     protected function encodePart($input)
@@ -138,7 +137,7 @@ class Punycode
                 }
                 if ($c === $n) {
                     $q = $delta;
-                    for ($k = static::BASE;; $k += static::BASE) {
+                    for ($k = static::BASE; ; $k += static::BASE) {
                         $t = $this->calculateThreshold($k, $bias);
                         if ($q < $t) {
                             break;
@@ -170,9 +169,127 @@ class Punycode
     }
 
     /**
+     * List code points for a given input
+     *
+     * @param string $input
+     *
+     * @return array Multi-dimension array with basic, non-basic and aggregated code points
+     */
+    protected function listCodePoints($input)
+    {
+        $codePoints = [
+            'all' => [],
+            'basic' => [],
+            'nonBasic' => [],
+        ];
+
+        $length = mb_strlen($input, $this->encoding);
+        for ($i = 0; $i < $length; $i++) {
+            $char = mb_substr($input, $i, 1, $this->encoding);
+            $code = $this->charToCodePoint($char);
+            if ($code < 128) {
+                $codePoints['all'][] = $codePoints['basic'][] = $code;
+            } else {
+                $codePoints['all'][] = $codePoints['nonBasic'][] = $code;
+            }
+        }
+
+        return $codePoints;
+    }
+
+    /**
+     * Convert a single or multi-byte character to its code point
+     *
+     * @param string $char
+     *
+     * @return integer
+     */
+    protected function charToCodePoint($char)
+    {
+        $code = ord($char[0]);
+        if ($code < 128) {
+            return $code;
+        } elseif ($code < 224) {
+            return (($code - 192) * 64) + (ord($char[1]) - 128);
+        } elseif ($code < 240) {
+            return (($code - 224) * 4096) + ((ord($char[1]) - 128) * 64) + (ord($char[2]) - 128);
+        } else {
+            return (($code - 240) * 262144) + ((ord($char[1]) - 128) * 4096) + ((ord($char[2]) - 128) * 64) + (ord($char[3]) - 128);
+        }
+    }
+
+    /**
+     * Convert a code point to its single or multi-byte character
+     *
+     * @param integer $code
+     *
+     * @return string
+     */
+    protected function codePointToChar($code)
+    {
+        if ($code <= 0x7F) {
+            return chr($code);
+        } elseif ($code <= 0x7FF) {
+            return chr(($code >> 6) + 192) . chr(($code & 63) + 128);
+        } elseif ($code <= 0xFFFF) {
+            return chr(($code >> 12) + 224) . chr((($code >> 6) & 63) + 128) . chr(($code & 63) + 128);
+        } else {
+            return chr(($code >> 18) + 240) . chr((($code >> 12) & 63) + 128) . chr((($code >> 6) & 63) + 128) . chr(($code & 63) + 128);
+        }
+    }
+
+    /**
+     * Calculate the bias threshold to fall between TMIN and TMAX
+     *
+     * @param integer $k
+     * @param integer $bias
+     *
+     * @return integer
+     */
+    protected function calculateThreshold($k, $bias)
+    {
+        if ($k <= $bias + static::TMIN) {
+            return static::TMIN;
+        } elseif ($k >= $bias + static::TMAX) {
+            return static::TMAX;
+        }
+
+        return $k - $bias;
+    }
+
+    /**
+     * Bias adaptation
+     *
+     * @param integer $delta
+     * @param integer $numPoints
+     * @param boolean $firstTime
+     *
+     * @return integer
+     */
+    protected function adapt($delta, $numPoints, $firstTime)
+    {
+        $delta = (int)(
+        ($firstTime)
+            ? $delta / static::DAMP
+            : $delta / 2
+        );
+        $delta += (int)($delta / $numPoints);
+
+        $k = 0;
+        while ($delta > ((static::BASE - static::TMIN) * static::TMAX) / 2) {
+            $delta = (int)($delta / (static::BASE - static::TMIN));
+            $k = $k + static::BASE;
+        }
+        $k = $k + (int)(((static::BASE - static::TMIN + 1) * $delta) / ($delta + static::SKEW));
+
+        return $k;
+    }
+
+    /**
      * Decode a Punycode domain name to its Unicode counterpart
      *
      * @param string $input Domain name in Punycode
+     *
      * @return string Unicode domain name
      */
     public function decode($input)
@@ -204,6 +321,7 @@ class Punycode
      * Decode a part of domain name, such as tld
      *
      * @param string $input Part of a domain name
+     *
      * @return string Unicode domain part
      */
     protected function decodePart($input)
@@ -226,7 +344,7 @@ class Punycode
             $oldi = $i;
             $w = 1;
 
-            for ($k = static::BASE;; $k += static::BASE) {
+            for ($k = static::BASE; ; $k += static::BASE) {
                 $digit = static::$decodeTable[$input[$pos++]];
                 $i = $i + ($digit * $w);
                 $t = $this->calculateThreshold($k, $bias);
@@ -239,7 +357,7 @@ class Punycode
             }
 
             $bias = $this->adapt($i - $oldi, ++$outputLength, ($oldi === 0));
-            $n = $n + (int) ($i / $outputLength);
+            $n = $n + (int)($i / $outputLength);
             $i = $i % ($outputLength);
             $output = mb_substr($output, 0, $i, $this->encoding) . $this->codePointToChar($n) . mb_substr($output, $i, $outputLength - 1, $this->encoding);
 
@@ -247,116 +365,5 @@ class Punycode
         }
 
         return $output;
-    }
-
-    /**
-     * Calculate the bias threshold to fall between TMIN and TMAX
-     *
-     * @param integer $k
-     * @param integer $bias
-     * @return integer
-     */
-    protected function calculateThreshold($k, $bias)
-    {
-        if ($k <= $bias + static::TMIN) {
-            return static::TMIN;
-        } elseif ($k >= $bias + static::TMAX) {
-            return static::TMAX;
-        }
-        return $k - $bias;
-    }
-
-    /**
-     * Bias adaptation
-     *
-     * @param integer $delta
-     * @param integer $numPoints
-     * @param boolean $firstTime
-     * @return integer
-     */
-    protected function adapt($delta, $numPoints, $firstTime)
-    {
-        $delta = (int) (
-            ($firstTime)
-                ? $delta / static::DAMP
-                : $delta / 2
-            );
-        $delta += (int) ($delta / $numPoints);
-
-        $k = 0;
-        while ($delta > ((static::BASE - static::TMIN) * static::TMAX) / 2) {
-            $delta = (int) ($delta / (static::BASE - static::TMIN));
-            $k = $k + static::BASE;
-        }
-        $k = $k + (int) (((static::BASE - static::TMIN + 1) * $delta) / ($delta + static::SKEW));
-
-        return $k;
-    }
-
-    /**
-     * List code points for a given input
-     *
-     * @param string $input
-     * @return array Multi-dimension array with basic, non-basic and aggregated code points
-     */
-    protected function listCodePoints($input)
-    {
-        $codePoints = array(
-            'all'      => array(),
-            'basic'    => array(),
-            'nonBasic' => array(),
-        );
-
-        $length = mb_strlen($input, $this->encoding);
-        for ($i = 0; $i < $length; $i++) {
-            $char = mb_substr($input, $i, 1, $this->encoding);
-            $code = $this->charToCodePoint($char);
-            if ($code < 128) {
-                $codePoints['all'][] = $codePoints['basic'][] = $code;
-            } else {
-                $codePoints['all'][] = $codePoints['nonBasic'][] = $code;
-            }
-        }
-
-        return $codePoints;
-    }
-
-    /**
-     * Convert a single or multi-byte character to its code point
-     *
-     * @param string $char
-     * @return integer
-     */
-    protected function charToCodePoint($char)
-    {
-        $code = ord($char[0]);
-        if ($code < 128) {
-            return $code;
-        } elseif ($code < 224) {
-            return (($code - 192) * 64) + (ord($char[1]) - 128);
-        } elseif ($code < 240) {
-            return (($code - 224) * 4096) + ((ord($char[1]) - 128) * 64) + (ord($char[2]) - 128);
-        } else {
-            return (($code - 240) * 262144) + ((ord($char[1]) - 128) * 4096) + ((ord($char[2]) - 128) * 64) + (ord($char[3]) - 128);
-        }
-    }
-
-    /**
-     * Convert a code point to its single or multi-byte character
-     *
-     * @param integer $code
-     * @return string
-     */
-    protected function codePointToChar($code)
-    {
-        if ($code <= 0x7F) {
-            return chr($code);
-        } elseif ($code <= 0x7FF) {
-            return chr(($code >> 6) + 192) . chr(($code & 63) + 128);
-        } elseif ($code <= 0xFFFF) {
-            return chr(($code >> 12) + 224) . chr((($code >> 6) & 63) + 128) . chr(($code & 63) + 128);
-        } else {
-            return chr(($code >> 18) + 240) . chr((($code >> 12) & 63) + 128) . chr((($code >> 6) & 63) + 128) . chr(($code & 63) + 128);
-        }
     }
 }

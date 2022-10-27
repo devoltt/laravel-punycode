@@ -28,7 +28,7 @@ class PunycodeServiceProvider extends ServiceProvider
     public function register()
     {
         $this->app->singleton('punycode', function () {
-            return new Punycode();
+            return new Punycode(config('punycode.encoding'));
         });
 
         $this->mergeConfigFrom(__DIR__.'/../config/punycode.php', 'punycode');
